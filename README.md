@@ -15,7 +15,7 @@ It downloads the release archive for the runner, checks it against the release's
 
 | Name | Default | What it does |
 | --- | --- | --- |
-| `version` | `latest` | The release to install, such as `0.14.0` or `v0.14.0`. Pin it, so a new release doesn't change your CI on a day you didn't choose. |
+| `version` | `latest` | The release to install, such as `0.15.0` or `v0.15.0`. Pin it, so a new release doesn't change your CI on a day you didn't choose. |
 | `github-token` | `${{ github.token }}` | Used only to look up the latest release, so the lookup isn't rate-limited. |
 
 ## Outputs

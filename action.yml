@@ -1,0 +1,78 @@
+name: Set up Conn3x
+description: Install the conn3x CLI on a GitHub Actions runner, checked against the release's checksums.
+author: The Conn3x Authors
+branding:
+  icon: terminal
+  color: blue
+
+inputs:
+  version:
+    description: Version to install, such as 0.14.0 or v0.14.0, or "latest".
+    default: latest
+  github-token:
+    description: Token for looking up the latest release, so the lookup isn't rate-limited.
+    default: ${{ github.token }}
+
+outputs:
+  version:
+    description: The version installed, without the v.
+    value: ${{ steps.install.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    - id: install
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        set -euo pipefail
+        repo=conn3xorg/conn3x
+        if [ "$VERSION" = latest ]; then
+          VERSION=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/$repo/releases/latest" |
+            sed -n 's/^ *"tag_name": *"\([^"]*\)".*/\1/p')
+        fi
+        VERSION=${VERSION#v}
+        echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$' ||
+          { echo "::error::version must look like 0.14.0, not '$VERSION'"; exit 1; }
+
+        case "$RUNNER_OS" in
+          Linux) os=linux ext=tar.gz ;;
+          macOS) os=darwin ext=tar.gz ;;
+          Windows) os=windows ext=zip ;;
+          *) echo "::error::no Conn3x build for $RUNNER_OS"; exit 1 ;;
+        esac
+        case "$RUNNER_ARCH" in
+          X64) arch=amd64 ;;
+          ARM64) arch=arm64 ;;
+          *) echo "::error::no Conn3x build for $RUNNER_ARCH"; exit 1 ;;
+        esac
+
+        file="conn3x_${VERSION}_${os}_${arch}.${ext}"
+        dir="$RUNNER_TOOL_CACHE/conn3x/$VERSION/$arch"
+        if [ ! -x "$dir/conn3x" ] && [ ! -f "$dir/conn3x.exe" ]; then
+          tmp=$(mktemp -d "$RUNNER_TEMP/conn3x.XXXXXX")
+          base="https://github.com/$repo/releases/download/v$VERSION"
+          curl -fsSL --retry 3 -o "$tmp/$file" "$base/$file"
+          curl -fsSL --retry 3 -o "$tmp/checksums.txt" "$base/checksums.txt"
+          want=$(awk -v f="$file" '$2 == f { print $1 }' "$tmp/checksums.txt")
+          [ -n "$want" ] || { echo "::error::$file isn't in checksums.txt"; exit 1; }
+          if command -v sha256sum >/dev/null; then
+            got=$(sha256sum "$tmp/$file" | cut -d' ' -f1)
+          else
+            got=$(shasum -a 256 "$tmp/$file" | cut -d' ' -f1)
+          fi
+          [ "$got" = "$want" ] || { echo "::error::$file doesn't match checksums.txt"; exit 1; }
+          mkdir -p "$dir"
+          if [ "$ext" = zip ]; then
+            pwsh -NoProfile -Command "Expand-Archive -LiteralPath '$tmp/$file' -DestinationPath '$dir' -Force"
+          else
+            tar -xzf "$tmp/$file" -C "$dir" conn3x
+          fi
+          rm -rf "$tmp"
+        fi
+        echo "$dir" >> "$GITHUB_PATH"
+        echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+        "$dir/conn3x" version | head -n 1

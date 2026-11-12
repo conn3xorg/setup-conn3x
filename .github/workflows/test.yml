@@ -1,0 +1,53 @@
+name: Test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 7 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, windows-2025]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: latest
+        uses: ./
+      - name: The latest release is on PATH
+        shell: bash
+        env:
+          WANT: ${{ steps.latest.outputs.version }}
+        run: conn3x version | head -n 1 | grep -F "Conn3x v$WANT "
+      - id: pinned
+        uses: ./
+        with:
+          version: v0.13.0
+      - name: A pinned version takes its place
+        shell: bash
+        run: |
+          [ "${{ steps.pinned.outputs.version }}" = 0.13.0 ]
+          conn3x version | head -n 1 | grep -F "Conn3x v0.13.0 "
+
+  bad-version:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: bad
+        uses: ./
+        continue-on-error: true
+        with:
+          version: "0.14.0; echo hi"
+      - name: A version that isn't one is refused
+        run: '[ "${{ steps.bad.outcome }}" = failure ]'

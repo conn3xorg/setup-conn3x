@@ -59,10 +59,12 @@ runs:
           curl -fsSL --retry 3 -o "$tmp/checksums.txt" "$base/checksums.txt"
           want=$(awk -v f="$file" '$2 == f { print $1 }' "$tmp/checksums.txt")
           [ -n "$want" ] || { echo "::error::$file isn't in checksums.txt"; exit 1; }
+          # Hash the bare name: given a path with backslashes, as on
+          # Windows, sha256sum escapes it and puts a \ before the hash.
           if command -v sha256sum >/dev/null; then
-            got=$(sha256sum "$tmp/$file" | cut -d' ' -f1)
+            got=$(cd "$tmp" && sha256sum "$file" | cut -d' ' -f1)
           else
-            got=$(shasum -a 256 "$tmp/$file" | cut -d' ' -f1)
+            got=$(cd "$tmp" && shasum -a 256 "$file" | cut -d' ' -f1)
           fi
           [ "$got" = "$want" ] || { echo "::error::$file doesn't match checksums.txt"; exit 1; }
           mkdir -p "$dir"

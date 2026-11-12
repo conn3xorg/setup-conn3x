@@ -27,7 +27,7 @@ jobs:
         shell: bash
         env:
           WANT: ${{ steps.latest.outputs.version }}
-        run: conn3x version | head -n 1 | grep -F "Conn3x v$WANT "
+        run: conn3x version | sed -n 1p | grep -F "Conn3x v$WANT "
       - id: pinned
         uses: ./
         with:
@@ -36,7 +36,7 @@ jobs:
         shell: bash
         run: |
           [ "${{ steps.pinned.outputs.version }}" = 0.13.0 ]
-          conn3x version | head -n 1 | grep -F "Conn3x v0.13.0 "
+          conn3x version | sed -n 1p | grep -F "Conn3x v0.13.0 "
 
   bad-version:
     runs-on: ubuntu-24.04

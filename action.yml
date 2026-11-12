@@ -75,4 +75,4 @@ runs:
         fi
         echo "$dir" >> "$GITHUB_PATH"
         echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-        "$dir/conn3x" version | head -n 1
+        "$dir/conn3x" version | sed -n 1p

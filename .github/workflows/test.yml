@@ -51,3 +51,13 @@ jobs:
           version: "0.14.0; echo hi"
       - name: A version that isn't one is refused
         run: '[ "${{ steps.bad.outcome }}" = failure ]'
+
+  # The reusable plan-and-apply workflow, on a circuit with no hosts: it
+  # comments the plan on a pull request, and applies on a push to main.
+  plan-apply:
+    uses: ./.github/workflows/plan-apply.yml
+    permissions:
+      contents: read
+      pull-requests: write
+    with:
+      working-directory: test/circuits

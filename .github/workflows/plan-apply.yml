@@ -100,6 +100,7 @@ jobs:
           DIR: ${{ inputs.working-directory }}
           RESULT: ${{ steps.plan.outputs.result }}
           NOKEY: ${{ steps.plan.outputs.nokey }}
+          FORK: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
           RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
@@ -109,8 +110,10 @@ jobs:
             changes) head="Conn3x will change \`$DIR\` when this merges." ;;
             *) head="The plan for \`$DIR\` failed." ;;
           esac
-          if [ "$NOKEY" = true ]; then
+          if [ "$NOKEY" = true ] && [ "$FORK" = true ]; then
             head="$head It ran without an SSH key: a pull request from a fork gets no secrets, so someone with write access can push its branch here to plan it with one."
+          elif [ "$NOKEY" = true ]; then
+            head="$head It ran without an SSH key, since none was passed as ssh-private-key."
           fi
           # A comment holds 65,536 characters; keep the end, where the summary is.
           text=$(tail -c 60000 "$RUNNER_TEMP/conn3x-plan.txt")

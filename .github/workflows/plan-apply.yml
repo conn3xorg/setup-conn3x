@@ -1,0 +1,195 @@
+# Plan on every pull request and apply on merge, for a directory of
+# circuits. Call it from a workflow that runs on pull_request and on push to
+# the default branch:
+#
+#   on:
+#     pull_request:
+#     push:
+#       branches: [main]
+#   jobs:
+#     conn3x:
+#       uses: conn3xorg/setup-conn3x/.github/workflows/plan-apply.yml@v1
+#       permissions:
+#         contents: read
+#         pull-requests: write
+#       with:
+#         working-directory: circuits
+#       secrets:
+#         ssh-private-key: ${{ secrets.CONN3X_SSH_KEY }}
+#         known-hosts: ${{ secrets.CONN3X_KNOWN_HOSTS }}
+#
+# Never call it from pull_request_target: that runs a fork's circuits with
+# your secrets.
+name: Conn3x plan and apply
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: The directory to run conn3x in.
+        type: string
+        default: .
+      version:
+        description: The Conn3x release to use, such as 0.21.0. Pin it.
+        type: string
+        default: latest
+      apply:
+        description: Apply on a push to the default branch. false plans there too, and changes nothing.
+        type: boolean
+        default: true
+    secrets:
+      ssh-private-key:
+        description: The private key conn3x logs in with, loaded into ssh-agent.
+        required: false
+      known-hosts:
+        description: Lines for ~/.ssh/known_hosts, so every host's key is checked.
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: write
+    # A newer push to the same pull request replaces a plan still running.
+    concurrency:
+      group: conn3x-plan-${{ github.event.pull_request.number }}-${{ inputs.working-directory }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: conn3xorg/setup-conn3x@v1
+        with:
+          version: ${{ inputs.version }}
+      - id: plan
+        name: Plan
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          SSH_KEY: ${{ secrets.ssh-private-key }}
+          KNOWN_HOSTS: ${{ secrets.known-hosts }}
+        run: |
+          set -uo pipefail
+          out="$RUNNER_TEMP/conn3x-plan.txt"
+          eval "$(ssh-agent -s)" >/dev/null
+          if [ -n "$SSH_KEY" ]; then
+            printf '%s\n' "$SSH_KEY" | ssh-add - 2>/dev/null
+          else
+            # A pull request from a fork gets no secrets, so it can't log in.
+            echo "nokey=true" >> "$GITHUB_OUTPUT"
+          fi
+          mkdir -p ~/.ssh && printf '%s\n' "$KNOWN_HOSTS" >> ~/.ssh/known_hosts
+          conn3x init -input=false -no-color > "$out" 2>&1 || { echo "result=failed" >> "$GITHUB_OUTPUT"; exit 0; }
+          conn3x plan -input=false -no-color -detailed-exitcode > "$out" 2>&1
+          case $? in
+            0) echo "result=no-changes" >> "$GITHUB_OUTPUT" ;;
+            2) echo "result=changes" >> "$GITHUB_OUTPUT" ;;
+            *) echo "result=failed" >> "$GITHUB_OUTPUT" ;;
+          esac
+          ssh-agent -k >/dev/null
+      - name: Comment the plan
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          DIR: ${{ inputs.working-directory }}
+          RESULT: ${{ steps.plan.outputs.result }}
+          NOKEY: ${{ steps.plan.outputs.nokey }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          marker="<!-- conn3x-plan: $DIR -->"
+          case "$RESULT" in
+            no-changes) head="No changes in \`$DIR\`." ;;
+            changes) head="Conn3x will change \`$DIR\` when this merges." ;;
+            *) head="The plan for \`$DIR\` failed." ;;
+          esac
+          if [ "$NOKEY" = true ]; then
+            head="$head It ran without an SSH key: a pull request from a fork gets no secrets, so someone with write access can push its branch here to plan it with one."
+          fi
+          # A comment holds 65,536 characters; keep the end, where the summary is.
+          text=$(tail -c 60000 "$RUNNER_TEMP/conn3x-plan.txt")
+          fence='```'
+          body=$(printf '%s\n%s\n\n<details><summary>Output</summary>\n\n%stext\n%s\n%s\n\n</details>\n\n[Run](%s)\n' "$marker" "$head" "$fence" "$text" "$fence" "$RUN")
+          id=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
+            --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | .id" | head -n 1)
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -f body="$body" >/dev/null
+          else
+            gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -f body="$body" >/dev/null
+          fi
+      - name: Fail on a failed plan
+        if: steps.plan.outputs.result == 'failed'
+        run: exit 1
+
+  apply:
+    if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: write
+    # One apply at a time for each directory, in the order they were pushed.
+    concurrency:
+      group: conn3x-apply-${{ github.repository }}-${{ inputs.working-directory }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: conn3xorg/setup-conn3x@v1
+        with:
+          version: ${{ inputs.version }}
+      - id: apply
+        name: Apply
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+        env:
+          SSH_KEY: ${{ secrets.ssh-private-key }}
+          KNOWN_HOSTS: ${{ secrets.known-hosts }}
+          APPLY: ${{ inputs.apply }}
+        run: |
+          set -uo pipefail
+          out="$RUNNER_TEMP/conn3x-apply.txt"
+          eval "$(ssh-agent -s)" >/dev/null
+          if [ -n "$SSH_KEY" ]; then
+            printf '%s\n' "$SSH_KEY" | ssh-add - 2>/dev/null
+          else
+            echo "::warning::ssh-private-key isn't set, so conn3x has no key to log in with"
+          fi
+          mkdir -p ~/.ssh && printf '%s\n' "$KNOWN_HOSTS" >> ~/.ssh/known_hosts
+          cmd=(apply -auto-approve)
+          [ "$APPLY" = true ] || cmd=(plan)
+          if conn3x init -input=false -no-color > "$out" 2>&1 && conn3x "${cmd[@]}" -input=false -no-color > "$out" 2>&1; then
+            echo "result=ok" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=failed" >> "$GITHUB_OUTPUT"
+          fi
+          ssh-agent -k >/dev/null
+          cat "$out"
+      - name: Comment on the merged pull request
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DIR: ${{ inputs.working-directory }}
+          RESULT: ${{ steps.apply.outputs.result }}
+          APPLY: ${{ inputs.apply }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          pr=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq '.[0].number // empty')
+          [ -n "$pr" ] || exit 0 # pushed straight to the branch
+          verb=apply; [ "$APPLY" = true ] || verb=plan
+          head="Conn3x ran $verb on \`$DIR\` after the merge."
+          [ "$RESULT" = ok ] || head="Conn3x's $verb of \`$DIR\` after the merge failed."
+          text=$(tail -c 60000 "$RUNNER_TEMP/conn3x-apply.txt")
+          fence='```'
+          body=$(printf '%s\n\n<details><summary>Output</summary>\n\n%stext\n%s\n%s\n\n</details>\n\n[Run](%s)\n' "$head" "$fence" "$text" "$fence" "$RUN")
+          gh api "repos/$GITHUB_REPOSITORY/issues/$pr/comments" -f body="$body" >/dev/null
+      - name: Fail on a failed apply
+        if: steps.apply.outputs.result == 'failed'
+        run: exit 1

@@ -15,7 +15,7 @@ It downloads the release archive for the runner, checks it against the release's
 
 | Name | Default | What it does |
 | --- | --- | --- |
-| `version` | `latest` | The release to install, such as `0.24.0` or `v0.24.0`. Pin it, so a new release doesn't change your CI on a day you didn't choose. |
+| `version` | `latest` | The release to install, such as `0.25.0` or `v0.25.0`. Pin it, so a new release doesn't change your CI on a day you didn't choose. |
 | `github-token` | `${{ github.token }}` | Used only to look up the latest release, so the lookup isn't rate-limited. |
 
 ## Outputs
@@ -42,7 +42,7 @@ jobs:
       pull-requests: write
     with:
       working-directory: circuits
-      version: 0.24.0
+      version: 0.25.0
     secrets:
       ssh-private-key: ${{ secrets.CONN3X_SSH_KEY }}
       known-hosts: ${{ secrets.CONN3X_KNOWN_HOSTS }}

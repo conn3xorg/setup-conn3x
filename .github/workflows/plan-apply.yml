@@ -8,12 +8,13 @@
 #       branches: [main]
 #   jobs:
 #     conn3x:
-#       uses: conn3xorg/setup-conn3x/.github/workflows/plan-apply.yml@v1
+#       uses: conn3xorg/setup-conn3x/.github/workflows/plan-apply.yml@<commit sha> # v1
 #       permissions:
 #         contents: read
 #         pull-requests: write
 #       with:
 #         working-directory: circuits
+#         environment: conn3x
 #       secrets:
 #         ssh-private-key: ${{ secrets.CONN3X_SSH_KEY }}
 #         known-hosts: ${{ secrets.CONN3X_KNOWN_HOSTS }}
@@ -37,6 +38,13 @@ on:
         description: Apply on a push to the default branch. false plans there too, and changes nothing.
         type: boolean
         default: true
+      environment:
+        description: >-
+          A GitHub environment for both jobs, such as one with required
+          reviewers, so the secrets reach a plan only after someone approves
+          the run. Empty runs without one.
+        type: string
+        default: ""
     secrets:
       ssh-private-key:
         description: The private key conn3x logs in with, loaded into ssh-agent.
@@ -52,6 +60,7 @@ jobs:
   plan:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
+    environment: ${{ inputs.environment }}
     permissions:
       contents: read
       pull-requests: write
@@ -63,7 +72,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: conn3xorg/setup-conn3x@v1
+      - uses: conn3xorg/setup-conn3x@3fc9717403d592c12dfa0219fbe6477687ebe3a3 # v1.0.0
         with:
           version: ${{ inputs.version }}
       - id: plan
@@ -111,7 +120,7 @@ jobs:
             *) head="The plan for \`$DIR\` failed." ;;
           esac
           if [ "$NOKEY" = true ] && [ "$FORK" = true ]; then
-            head="$head It ran without an SSH key: a pull request from a fork gets no secrets, so someone with write access can push its branch here to plan it with one."
+            head="$head It ran without an SSH key: a pull request from a fork gets no secrets. Planning runs the circuits' providers with the key, so review the change before planning it with one, and don't push a fork's branch here to do it."
           elif [ "$NOKEY" = true ]; then
             head="$head It ran without an SSH key, since none was passed as ssh-private-key."
           fi
@@ -133,6 +142,7 @@ jobs:
   apply:
     if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-24.04
+    environment: ${{ inputs.environment }}
     permissions:
       contents: read
       pull-requests: write
@@ -144,7 +154,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: conn3xorg/setup-conn3x@v1
+      - uses: conn3xorg/setup-conn3x@3fc9717403d592c12dfa0219fbe6477687ebe3a3 # v1.0.0
         with:
           version: ${{ inputs.version }}
       - id: apply
